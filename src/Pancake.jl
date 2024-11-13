@@ -688,7 +688,7 @@ function scaffold(scaffolddir,kwargs::Dict)
         kernels = map(kernelflavors) do (k,v)
             #need to change how our kernel function works so we can change laser power
             #for the hammocks
-            @info "Compiling $v kernel"
+            @info "Compiling $k kernel"
             k => [CompiledGeometry("$(k)_support.gwl",v.support,laserpower=kwargs[:laserpower],
                                    scanspeed=kwargs[:scanspeed]),
                   CompiledGeometry("$(k)_hammock.gwl",v.hammock,laserpower=kwargs[:hamlaserpower],
@@ -701,6 +701,8 @@ function scaffold(scaffolddir,kwargs::Dict)
         j = 0
         while true
             while true
+                @show i
+                @show j
                 kernelcenter = firstkernelcenter + [knx*px*i,-kny*py*j]
                 if ((i==0) && iseven(j)) || ((i == (knx-1)) && isodd(j))
                     #first kernel on a new row, just want beams on top,
