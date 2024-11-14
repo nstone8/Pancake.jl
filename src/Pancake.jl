@@ -46,30 +46,30 @@ function createconfig(filename="config.jl")
         :lscaf => 6u"mm",
         :wscaf => 4u"mm",
         :dfield => 1750u"µm",
-        :hbottom => 30u"µm",
+        :hbottom => 40u"µm",
         :htop => 50u"µm",
         :chamferbottom => pi/6,
         :chamfertop => pi/6,
         :cutangle => pi/6,
         :overlap => 10u"µm",
         :dslice => 1u"µm",
-        :nhammock => 3,
-        :dhammockslice => 300u"nm",
+        :nhammock => 5,
+        :dhammockslice => 280u"nm",
         :wbumper => 200u"µm",
         :fillet => 30u"µm",
-        :wpost => 25u"µm",
+        :wpost => 50u"µm",
         :hbeam => 10u"µm",
-        :lbeammax => 120u"µm",
+        :lbeammax => 200u"µm",
         :maxseglength => 30u"µm",
         :keygap => 20u"µm",
         :dhammockhatch => 1u"µm",
         :dhatch => 300u"nm",
-        :laserpower => 100u"mW",
-        :scanspeed => 100000u"µm/s",
+        :laserpower => 50u"mW",
+        :scanspeed => 60_000u"µm/s",
         :stagespeed => 100u"µm/s",
         :interfacepos => 10u"µm",
-        :hamscanspeed => 10000u"µm/s",
-        :hamlaserpower => 100u"mW",
+        :hamscanspeed => 2_500u"µm/s",
+        :hamlaserpower => 50u"mW",
     )
     """
     open(filename,"w") do io
@@ -407,7 +407,7 @@ function kernel(;px,py,knx,kny,left=false,right=false,top=false,bottom=false,kwa
     firstpost = post(;kwargs...)
     posts = map([(i,j) for i in 0:(knx-1) for j in 0:(kny-1)]) do (i,j)
         #scrooch into position
-        translate(firstpost,[i*px,j*py],preserveframe=true)
+        translate(firstpost,[i*px,-j*py],preserveframe=true)
     end
     #merge the posts into one block
     postblock = merge(posts...)
@@ -439,24 +439,25 @@ function kernel(;px,py,knx,kny,left=false,right=false,top=false,bottom=false,kwa
         push!(hbeamrow,translate(hbeamrow[end],[px,zero(px)],preserveframe=true))
     end
     #copy this row to make the others
-    hbeams = vcat(([translate(hr,[zero(py),py*j],preserveframe=true)
+    hbeams = vcat(([translate(hr,[zero(py),-py*j],preserveframe=true)
                     for hr in hbeamrow] for j in 0:(kny-1))...)
 
     #same approach for the vertical beams
-    firstvbeam = Beam(nsegs,kwargs[:wpost]/2,py-kwargs[:wpost]/2,kwargs[:wpost];kwargs...)
+    firstvbeam = Beam(nsegs,zero(kwargs[:wpost]),py + kwargs[:wpost],kwargs[:wpost];kwargs...)
+    firstvbeam = translate(firstvbeam,[-py+kwargs[:wpost]/2,zero(kwargs[:wpost])],preserveframe=true)
     #this beam is currently horizontal, do a rotation
     firstvbeam = rotate(firstvbeam,pi/2,preserveframe=true)
     #make one column's worth of vertical beams
     vbeamcol = map(0:(kny-2)) do j
-        translate(firstvbeam,[zero(py),j*py],preserveframe=true)
+        translate(firstvbeam,[zero(py),-j*py],preserveframe=true)
     end
     #do we have top beams
     if top
-        pushfirst!(vbeamcol,translate(firstvbeam,[zero(py),-py],preserveframe=true))
+        pushfirst!(vbeamcol,translate(firstvbeam,[zero(py),py],preserveframe=true))
     end
     #do we have bottom beams
     if bottom
-        push!(vbeamcol,translate(vbeamcol[end],[zero(py),py],preserveframe=true))
+        push!(vbeamcol,translate(vbeamcol[end],[zero(py),-py],preserveframe=true))
     end
     #copy this col to make the others
     vbeams = vcat(([translate(vb,[px*i,zero(px)],preserveframe=true)
@@ -496,8 +497,8 @@ function kernel(;px,py,knx,kny,left=false,right=false,top=false,bottom=false,kwa
     bottom_verts = [
         [kwargs[:wpost]/2,-kwargs[:wpost]/2],
         [px-kwargs[:wpost]/2,-kwargs[:wpost]/2],
-        [px-kwargs[:wpost]/2,py-kwargs[:wpost]/2],
-        [kwargs[:wpost]/2,py-kwargs[:wpost]/2]
+        [px-kwargs[:wpost]/2,-py+kwargs[:wpost]/2],
+        [kwargs[:wpost]/2,-py+kwargs[:wpost]/2]
     ]
     #what sign should the cuts have at each vertex to dialate the hammock correctly
     dia_sign = [
@@ -534,37 +535,38 @@ function kernel(;px,py,knx,kny,left=false,right=false,top=false,bottom=false,kwa
 
     #now copy this row
     hams = map(0:(kny-2)) do j
-        [translate(hr,[zero(py),j*py],preserveframe=true) for hr in hamrow]
+        [translate(hr,[zero(py),-j*py],preserveframe=true) for hr in hamrow]
     end
 
     #add on if we have top or bottom beams
     if top
-        pushfirst!(hams,[translate(hr,[zero(py),-py],preserveframe=true) for hr in hamrow])
+        pushfirst!(hams,[translate(hr,[zero(py),py],preserveframe=true) for hr in hamrow])
     end
     if bottom
-        push!(hams,[translate(he,[zero(py),py],preserveframe=true) for he in hams[end]])
+        push!(hams,[translate(he,[zero(py),-py],preserveframe=true) for he in hams[end]])
     end
 
     #merge all the hammocks into one block
     hamblock = merge(vcat(hams...)...)
-    #hatch the hamblock
-    @info "hatching a kernel"
-    hatchedham = hatch(hamblock;dhatch=kwargs[:dhammockhatch],
-                       bottomdir = pi/4,
-                       diroffset = pi/2)
-
+    
     #build a support `SuperBlock`
     sb = SuperBlock(postblock,halfbeamblocks...,keyblock)
     
     #move the origin to the center of the posts
-    neworigin = [(knx-1)*px/2,(kny-1)*py/2]
+    neworigin = [(knx-1)*px/2,-(kny-1)*py/2]
     sbt = translateorigin(sb,neworigin)
-    ht = translateorigin(hatchedham,neworigin)
+    transhamblock = translateorigin(hamblock,neworigin)
+    #hatch the hamblock
+    @info "hatching a kernel"
+    hatchedham = hatch(transhamblock;dhatch=kwargs[:dhammockhatch],
+                       bottomdir = pi/4,
+                       diroffset = pi/2)
+
     #hatch and return
     sbth = hatch(sbt,dhatch=kwargs[:dhatch],
                  bottomdir = pi/4,
                  diroffset = pi/2)
-    Kernel(sbth,ht)
+    Kernel(sbth,hatchedham)
 end
 
 """
@@ -603,11 +605,11 @@ function scaffold(scaffolddir,kwargs::Dict)
         pmax = kwargs[:wpost] + kwargs[:lbeammax]
         #calculate our grid dimensions
         
-        ny = ceil(Int,
+        @show ny = ceil(Int,
                   #distance from the top of the top row of posts to the bottom bumper
                   (kwargs[:wscaf] - 2*kwargs[:wbumper] - kwargs[:lbeammax])/
                       pmax)
-                nx = #start with one post
+        @show nx = #start with one post
             1 + 
             ceil(Int,
                  #distance from the end of the leftmost post to the end of the scaffold
@@ -657,7 +659,7 @@ function scaffold(scaffolddir,kwargs::Dict)
 	    nx*ny
         end |> findmax
         #assign this max size to variables for convenience
-        (knx,kny) = possiblenumcombos[maxcomboindex]
+        @show (knx,kny) = possiblenumcombos[maxcomboindex]
         
         #we will write kernels in a serpentine pattern, top to bottom, connecting
         #to kernels 'above' and 'behind' us with beams. On the last row we will connect
@@ -665,13 +667,13 @@ function scaffold(scaffolddir,kwargs::Dict)
 
         #get the coordinates of the center of each kernel.
         #first get the size of the whole shebang
-        postarraydims = [knx*px + kwargs[:wpost], kny*py + kwargs[:wpost]]
+        @show postarraydims = [(nx-1)*px + kwargs[:wpost], (ny-1)*py + kwargs[:wpost]]
         #the array of posts is centered on (0,0)
-        arraycorner = [-postarraydims[1]/2,postarraydims[1]/2]
-        #coordinates of the first kernel center
-        firstkernelcenter = arraycorner + [
-            kwargs[:wpost]/2 + (knx-1)*px/2,
-            -kwargs[:wpost]/2 - (kny-1)*py/2
+        @show arraycorner = [-postarraydims[1]/2,postarraydims[2]/2]
+        #coordinates of the first kernel's first post
+        firstkernelfirstpost = arraycorner + [
+            kwargs[:wpost]/2,
+            -kwargs[:wpost]/2
         ]
         #compile all the kernels we are going to need
         common_args = Dict(:px => px, :py => py, :knx => knx, :kny => kny)
@@ -689,13 +691,15 @@ function scaffold(scaffolddir,kwargs::Dict)
             #need to change how our kernel function works so we can change laser power
             #for the hammocks
             @info "Compiling $k kernel"
-            k => [CompiledGeometry("$(k)_support.gwl",v.support,laserpower=kwargs[:laserpower],
+            k => [CompiledGeometry(joinpath("scripts","$(k)_support.gwl"),v.support,laserpower=kwargs[:laserpower],
                                    scanspeed=kwargs[:scanspeed]),
-                  CompiledGeometry("$(k)_hammock.gwl",v.hammock,laserpower=kwargs[:hamlaserpower],
+                  CompiledGeometry(joinpath("scripts","$(k)_hammock.gwl"),v.hammock,laserpower=kwargs[:hamlaserpower],
                                    scanspeed=kwargs[:hamscanspeed])
              ]            
         end |> Dict
         #need to vcat since each kernel has support and a hammock
+        @show nkernelx = nx/knx
+        @show nkernely = ny/kny
         allkernels = []
         i = 0
         j = 0
@@ -703,36 +707,41 @@ function scaffold(scaffolddir,kwargs::Dict)
             while true
                 @show i
                 @show j
-                kernelcenter = firstkernelcenter + [knx*px*i,-kny*py*j]
-                if ((i==0) && iseven(j)) || ((i == (knx-1)) && isodd(j))
+                kernelcoords = firstkernelfirstpost + [knx*px*i,-kny*py*j]
+                #I think the ahmes translate function expects three coordinates
+                push!(kernelcoords,zero(kernelcoords[1]))
+                if ((i==0) && iseven(j)) || ((i == (nkernelx-1)) && isodd(j))
                     #first kernel on a new row, just want beams on top,
                     #unless this is the last row
-                    thiskernel = j == kny-1 ? kernels[:tb] : kernels[:t]
-                    thiskerneltranslated = [translate(k,kernelcenter) for k in thiskernel]
+                    thiskernel = j == nkernely-1 ? kernels[:tb] : kernels[:t]
+                    thiskerneltranslated = [translate(k,kernelcoords) for k in thiskernel]
                     push!(allkernels,thiskerneltranslated...)
                 else
                     #not the first kernel, want beams on top and on the side
                     thiskernel = if iseven(j)
                         #beams on the left
-                        j == kny-1 ? kernels[:ltb] : kernels[:lt]
+                        j == nkernely-1 ? kernels[:ltb] : kernels[:lt]
                     else
                         #beams on the right
-                        j == kny-1 ? kernels[:rtb] : kernels[:rt]
+                        j == nkernely-1 ? kernels[:rtb] : kernels[:rt]
                     end
-                    thiskerneltranslated = [translate(k,kernelcenter) for k in thiskernel]
+                    thiskerneltranslated = [translate(k,kernelcoords) for k in thiskernel]
                     push!(allkernels,thiskerneltranslated...)
                 end
                 if iseven(j)
+                    if i==(nkernelx-1)
+                        break
+                    end
                     i+=1
                 else
+                    if i == 0
+                        break
+                    end
                     i-=1
-                end
-                if i>(knx-1)
-                    break
                 end
             end
             j+=1
-            if j>(kny-1)
+            if j>(nkernely-1)
                 break
             end
         end
