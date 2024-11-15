@@ -313,11 +313,11 @@ function Beam(nsegs::Int,startx,stopx,width;kwargs...)
         seg = if i==1
             box(lseg + (kwargs[:overlap]/2),width,kwargs[:hbeam],kwargs[:dslice],
                 chamfer =[-kwargs[:chamfertop] kwargs[:cutangle]
-                          kwargs[:cutangle]    kwargs[:cutangle]])            
+                          kwargs[:chamfertop]    kwargs[:chamfertop]])            
         else
             box(lseg,width,kwargs[:hbeam],kwargs[:dslice],
                 chamfer =[-kwargs[:cutangle]   kwargs[:cutangle]
-                          kwargs[:cutangle]    kwargs[:cutangle]])            
+                          kwargs[:chamfertop]    kwargs[:chamfertop]])            
         end
         #seg is currently centered at [0,0,0]. Move it into position (use preserveframe so we don't
         #move the stage
@@ -375,11 +375,12 @@ function post(;kwargs...)
         z => kwargs[:wpost] - (if z < kwargs[:hbottom]
                                    #we're underneath the beams
                                    #the amount of undercut
-                                   (kwargs[:hbottom]-z)*tan(kwargs[:chamferbottom])
+                                   #multiply by two because we're cutting off both sides
+                                   2*(kwargs[:hbottom]-z)*tan(kwargs[:chamferbottom])
                                else
                                    #we're on top of the beams
                                    #the amount of 'overcut'
-                                   (z-kwargs[:hbottom])*tan(kwargs[:chamfertop])
+                                   2*(z-kwargs[:hbottom])*tan(kwargs[:chamfertop])
                                end)
     end
 
@@ -413,6 +414,8 @@ function kernel(;px,py,knx,kny,left=false,right=false,top=false,bottom=false,kwa
     postblock = merge(posts...)
     #the first horizontal beam is centered on (px/2,0) and has length `px-wpost`
     lhbeam = px - kwargs[:wpost]
+    #the width parameter to `Beam` takes the width at the middle of the beam
+    wbeam = kwargs[:wpost]-2*(kwargs[:hbeam]/2) * tan(kwargs[:chamfertop])
     nhsegs = ceil(Int,lhbeam / kwargs[:maxseglength])
     if iseven(nhsegs)
         nhsegs += 1
@@ -425,7 +428,7 @@ function kernel(;px,py,knx,kny,left=false,right=false,top=false,bottom=false,kwa
     end
     #we'll give all of the beams the same number of segments for simplicity
     nsegs = max(nhsegs,nvsegs)
-    firsthbeam = Beam(nsegs,kwargs[:wpost]/2,px-kwargs[:wpost]/2,kwargs[:wpost];kwargs...)
+    firsthbeam = Beam(nsegs,kwargs[:wpost]/2,px-kwargs[:wpost]/2,wbeam;kwargs...)
     #make one row's worth of the horizontal beams
     hbeamrow = map(0:(knx-2)) do i
         translate(firsthbeam,[i*px,zero(px)],preserveframe=true)
@@ -443,7 +446,7 @@ function kernel(;px,py,knx,kny,left=false,right=false,top=false,bottom=false,kwa
                     for hr in hbeamrow] for j in 0:(kny-1))...)
 
     #same approach for the vertical beams
-    firstvbeam = Beam(nsegs,zero(kwargs[:wpost]),py + kwargs[:wpost],kwargs[:wpost];kwargs...)
+    firstvbeam = Beam(nsegs,zero(kwargs[:wpost]),py + kwargs[:wpost],wbeam;kwargs...)
     firstvbeam = translate(firstvbeam,[-py+kwargs[:wpost]/2,zero(kwargs[:wpost])],preserveframe=true)
     #this beam is currently horizontal, do a rotation
     firstvbeam = rotate(firstvbeam,pi/2,preserveframe=true)
@@ -490,9 +493,9 @@ function kernel(;px,py,knx,kny,left=false,right=false,top=false,bottom=false,kwa
     hham = kwargs[:dhammockslice]*(kwargs[:nhammock]-1)
     @assert hham < kwargs[:hbeam] "hammocks can not be thicker than beams"
     #inital `overcut` due to the chamfered beams
-    ocut_init = (kwargs[:hbeam] - hham) * tan(kwargs[:chamferbottom])
+    ocut_init = (kwargs[:hbeam] - hham) * tan(kwargs[:chamfertop])
     #additional overcut per slice
-    ocut_slice = kwargs[:dhammockslice] * tan(kwargs[:chamferbottom])
+    ocut_slice = kwargs[:dhammockslice] * tan(kwargs[:chamfertop])
     #vertices of the first hammock if it was at the bottom of the beams, with no overlap
     bottom_verts = [
         [kwargs[:wpost]/2,-kwargs[:wpost]/2],
