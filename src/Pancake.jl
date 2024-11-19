@@ -40,6 +40,10 @@ will be written to `"config.jl"`.
 - interfacepos: how far into the substrate writing should begin
 - hamscanspeed: scan speed for hammocks
 - hamlaserpower: laser power for hammocks
+- tfin: fin thickness
+- finoverlap: amount of overlap between neighboring fins
+- hfintaper: vertical distance to transition from fin support post to vertical fin segment
+- fingap: perpendicular gap between neighboring fins
 """
 function createconfig(filename="config.jl")
     config = """Dict(
@@ -70,6 +74,10 @@ function createconfig(filename="config.jl")
         :interfacepos => 10u"µm",
         :hamscanspeed => 2_500u"µm/s",
         :hamlaserpower => 50u"mW",
+        :tfin => 10u"µm",
+        :finoverlap => 50u"µm",
+        :fingap => 10u"µm",
+        :hfintaper => 10u"µm"
     )
     """
     open(filename,"w") do io
@@ -286,10 +294,12 @@ function bumper(;kwargs...)
     return SuperBlock(lbblock,midbottomblocks...,rbblock,rtblock,midtopblocks...,ltblock)
 end
 
-#build a segmented beam with nsegs segments centered on y=0.
-#startx and stopx should be the position of the edge we are bonding to at the z coordinate
-#corresponding to the bottom of the beam (i.e. this function will build in overlap)
-#gonna go overboard and make this a struct so we can define rotation and translation
+"""
+build a segmented beam with nsegs segments centered on y=0.
+startx and stopx should be the position of the edge we are bonding to at the z coordinate
+corresponding to the bottom of the beam (i.e. this function will build in overlap)
+gonna go overboard and make this a struct so we can define rotation and translation
+"""
 struct Beam
     leftsegs
     rightsegs
@@ -574,6 +584,90 @@ end
 
 """
 ```julia
+fin(lfin;kwargs...)
+```
+Build a 'fin' which will make up one part of an interleved wall on
+either end of the scaffold. `lfin` is the length of the fin, which
+must be calculated based on post pitch and `finoverlap`.
+"""
+function fin(lfin;kwargs...)
+    #this is the side length of the square flat top of the posts
+    wbase = 2*(kwargs[:hbeam])*tan(kwargs[:chamfertop])
+    #we will transition smoothly from slice dimensions ``lstart×wstart``
+    #to ``lend×wend`` over `:hfintaper`.
+    lstart = wstart = wbase
+    lend = lfin
+    wend = kwargs[:tfin]
+
+    #the center of the slice will go from `[0,0]` to `[(fingap+tfin)/2,0]`
+    #little helper function for making rectangular slices centered on `center`
+    cstart = [zero(kwargs[:tfin]),zero(kwargs[:tfin])]
+    cend = [(kwargs[:fingap]+kwargs[:tfin])/2,zero(kwargs[:tfin])]
+
+    function recslice(l,w,center=[zero(kwargs[:tfin]),zero(kwargs[:tfin])])
+        centeredverts = [
+            #l corresponds to y
+            [-w,l],
+            [w,l],
+            [w,-l],
+            [-w,-l]
+        ] / 2
+        verts = map(centeredverts) do cv
+            cv + center
+        end
+        Slice(
+            [polycontour(verts, kwargs[:tfin]/2)]
+        )
+    end
+
+    #get all of the slice z corrdinates
+    allz = range(start=kwargs[:hbottom]+kwargs[:hbeam]-kwargs[:overlap],
+                 step=kwargs[:dslice],
+                 stop=kwargs[:hbottom]+kwargs[:htop])
+        
+    #first just make some slices overlapping with the post to glue us on
+    posttop = kwargs[:hbottom]+kwargs[:hbeam]
+    overlapz = filter(allz) do z
+        z <= posttop
+    end
+    overlapslices = map(overlapz) do z
+        z => recslice(lstart,wstart)
+    end
+
+    #now make our 'transition' slices
+    transtop = kwargs[:hbottom]+kwargs[:hbeam]+kwargs[:hfintaper]
+    transz = filter(allz) do z
+        posttop < z <= transtop
+    end
+
+    #this is our progress along the transition zone, 0 is at the start,
+    #1 is at the end
+    transratio = range(start=0,stop=1,length=length(transz))
+    
+    trans_slices = map(zip(transz,transratio)) do (z,tr)
+        #little helper function
+        function interpolate(start,stop,ratio)
+            start + ratio*(stop-start)
+        end
+        l=interpolate(lstart,lend,tr)
+        w=interpolate(wstart,wend,tr)
+        c=interpolate(cstart,cend,tr)
+        z => recslice(l,w,c)
+    end
+    
+    topz = filter(allz) do z
+        transtop < z
+    end
+
+    topslices = map(topz) do z
+        z => recslice(lend,wend,cend)
+    end
+    allslices = vcat(overlapslices,trans_slices,topslices)
+    Block(allslices...)
+end
+
+"""
+```julia
 scaffold(scaffolddir[, configfilename])
 scaffold(scaffolddir,configdict)
 ```
@@ -678,6 +772,7 @@ function scaffold(scaffolddir,kwargs::Dict)
             kwargs[:wpost]/2,
             -kwargs[:wpost]/2
         ]
+        
         #compile all the kernels we are going to need
         common_args = Dict(:px => px, :py => py, :knx => knx, :kny => kny)
         kernelflavors = [
@@ -746,7 +841,47 @@ function scaffold(scaffolddir,kwargs::Dict)
                 break
             end
         end
-        vcat(bumpers,allkernels)
+
+        #build our fin walls
+        lfin = py + 2*kwargs[:finoverlap]
+
+        #find the maximum number of fins that can be printed at once in one field of view
+        knf = filter(allmultiples(ny)) do j
+            fits = sqrt((py*(j-1)+lfin)^2 + (kwargs[:fingap] + 2*kwargs[:tfin])^2) < kwargs[:dfield]
+            #must have an even number of fins to be able to stack them
+            fits && iseven(j)
+        end |> pop!
+
+
+        firstfin = fin(lfin;kwargs...)
+        finvec = map(0:(knf-1)) do j
+            f = iseven(j) ? firstfin : rotate(firstfin,pi,preserveframe=true)
+            translate(f,[zero(kwargs[:tfin]),-py],preserveframe=true)
+        end
+        finblock = SuperBlock(finvec...)
+        #translate the origin to the center of the block
+        fbt = translateorigin(finblock,[zero(kwargs[:tfin]),-py*(knf-1)/2])
+        @info "hatching and compiling fins"
+        hatchedfins = hatch(fbt,dhatch=kwargs[:dhatch],
+                            bottomdir = pi/4,
+                            diroffset = pi/2)
+        compfins = CompiledGeometry(joinpath("scripts","fins.gwl"),
+                                    hatchedfins,
+                                    laserpower=kwargs[:laserpower],
+                                    scanspeed=kwargs[:scanspeed])
+        #gotta go place all the fins
+        lcompfinvec = map(0:(knf-1)) do j
+            kcenter = firstkernelfirstpost + [zero(kwargs[:tfin]),-py*knf]
+            push!(kcenter,zero(kwargs[:tfin]))
+            translate(compfins,kcenter)
+        end
+        #coem back up the right side
+        transdist = -2*firstkernelfirstpost[1]
+        rcompfinvec = map(reverse(lcompfinvec)) do f
+            t = [transdist,zero(kwargs[:tfin]),zero(kwargs[:tfin])]
+            translate(f,t)
+        end
+        vcat(bumpers,allkernels,lcompfinvec,rcompfinvec)
     end
     GWLJob(joinpath(scaffolddir,"scaffold.gwl"),compgeom...;
            stagespeed=kwargs[:stagespeed],interfacepos=kwargs[:interfacepos])
