@@ -42,17 +42,18 @@ will be written to `"config.jl"`.
 - hamlaserpower: laser power for hammocks
 - tfin: fin thickness
 - finoverlap: amount of overlap between neighboring fins
-- hfintaper: vertical distance to transition from fin support post to vertical fin segment
+- scrollradius: radius at which we expect the scaffold to be scrolled
 - fingap: perpendicular gap between neighboring fins
+- hfintransition: amount of vertical distance over which to skew the fins
 """
 function createconfig(filename="config.jl")
     config = """Dict(
         :lscaf => 6u"mm",
         :wscaf => 4u"mm",
         :dfield => 1750u"µm",
-        :hbottom => 40u"µm",
-        :htop => 50u"µm",
-        :chamferbottom => pi/6,
+        :hbottom => 30u"µm",
+        :htop => 70u"µm",
+        :chamferbottom => 0,
         :chamfertop => pi/6,
         :cutangle => pi/6,
         :overlap => 10u"µm",
@@ -61,9 +62,9 @@ function createconfig(filename="config.jl")
         :dhammockslice => 280u"nm",
         :wbumper => 200u"µm",
         :fillet => 30u"µm",
-        :wpost => 50u"µm",
+        :wpost => 25u"µm",
         :hbeam => 10u"µm",
-        :lbeammax => 200u"µm",
+        :lbeammax => 100u"µm",
         :maxseglength => 30u"µm",
         :keygap => 20u"µm",
         :dhammockhatch => 1u"µm",
@@ -77,7 +78,8 @@ function createconfig(filename="config.jl")
         :tfin => 10u"µm",
         :finoverlap => 50u"µm",
         :fingap => 10u"µm",
-        :hfintaper => 10u"µm"
+        :scrollradius => 3.5u"mm"/(2pi),
+        :hfintransition => 10u"µm"
     )
     """
     open(filename,"w") do io
@@ -584,19 +586,17 @@ end
 
 """
 ```julia
-fin(lfin;kwargs...)
+fin(lfin,[hfintaper];kwargs...)
 ```
 Build a 'fin' which will make up one part of an interleved wall on
 either end of the scaffold. `lfin` is the length of the fin, which
 must be calculated based on post pitch and `finoverlap`.
 """
-function fin(lfin;kwargs...)
+function fin(lfin,hfintaper;kwargs...)
     #this is the side length of the square flat top of the posts
     wbase = 2*(kwargs[:hbeam])*tan(kwargs[:chamfertop])
-    #we will transition smoothly from slice dimensions ``lstart×wstart``
-    #to ``lend×wend`` over `:hfintaper`.
     lstart = wstart = wbase
-    lend = lfin
+
     wend = kwargs[:tfin]
 
     #the center of the slice will go from `[0,0]` to `[(fingap+tfin)/2,0]`
@@ -627,6 +627,16 @@ function fin(lfin;kwargs...)
         
     #first just make some slices overlapping with the post to glue us on
     posttop = kwargs[:hbottom]+kwargs[:hbeam]
+    #little helper function
+    finlength = function(z)
+        heightabovepost = z - posttop
+        minfinlength = 2*sqrt(kwargs[:scrollradius]^2 - (kwargs[:scrollradius]-heightabovepost)^2)
+        if lstart > minfinlength
+            return lstart
+        end
+        minfinlength < lfin ? minfinlength : lfin
+    end
+    
     overlapz = filter(allz) do z
         z <= posttop
     end
@@ -635,7 +645,7 @@ function fin(lfin;kwargs...)
     end
 
     #now make our 'transition' slices
-    transtop = kwargs[:hbottom]+kwargs[:hbeam]+kwargs[:hfintaper]
+    transtop = kwargs[:hbottom]+kwargs[:hbeam]+hfintaper
     transz = filter(allz) do z
         posttop < z <= transtop
     end
@@ -649,7 +659,7 @@ function fin(lfin;kwargs...)
         function interpolate(start,stop,ratio)
             start + ratio*(stop-start)
         end
-        l=interpolate(lstart,lend,tr)
+        l=finlength(z)
         w=interpolate(wstart,wend,tr)
         c=interpolate(cstart,cend,tr)
         z => recslice(l,w,c)
@@ -660,7 +670,7 @@ function fin(lfin;kwargs...)
     end
 
     topslices = map(topz) do z
-        z => recslice(lend,wend,cend)
+        z => recslice(finlength(z),wend,cend)
     end
     allslices = vcat(overlapslices,trans_slices,topslices)
     Block(allslices...)
@@ -843,8 +853,9 @@ function scaffold(scaffolddir,kwargs::Dict)
         end
 
         #build our fin walls
+        #determine the values we're using for lfin and hfintaper
         lfin = py + 2*kwargs[:finoverlap]
-
+        
         #find the maximum number of fins that can be printed at once in one field of view
         knf = filter(allmultiples(ny)) do j
             fits = sqrt((py*(j-1)+lfin)^2 + (kwargs[:fingap] + 2*kwargs[:tfin])^2) < kwargs[:dfield]
@@ -853,10 +864,10 @@ function scaffold(scaffolddir,kwargs::Dict)
         end |> pop!
 
 
-        firstfin = fin(lfin;kwargs...)
+        firstfin = fin(lfin,kwargs[:hfintransition];kwargs...)
         finvec = map(0:(knf-1)) do j
             f = iseven(j) ? firstfin : rotate(firstfin,pi,preserveframe=true)
-            translate(f,[zero(kwargs[:tfin]),-py],preserveframe=true)
+            translate(f,[zero(kwargs[:tfin]),-py*j],preserveframe=true)
         end
         finblock = SuperBlock(finvec...)
         #translate the origin to the center of the block
@@ -870,8 +881,9 @@ function scaffold(scaffolddir,kwargs::Dict)
                                     laserpower=kwargs[:laserpower],
                                     scanspeed=kwargs[:scanspeed])
         #gotta go place all the fins
-        lcompfinvec = map(0:(knf-1)) do j
-            kcenter = firstkernelfirstpost + [zero(kwargs[:tfin]),-py*knf]
+        numfinkernel = ny/knf
+        lcompfinvec = map(0:(numfinkernel-1)) do j
+            kcenter = firstkernelfirstpost + [zero(kwargs[:tfin]),-py*knf*j]
             push!(kcenter,zero(kwargs[:tfin]))
             translate(compfins,kcenter)
         end
