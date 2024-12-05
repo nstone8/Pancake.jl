@@ -61,10 +61,10 @@ function createconfig(filename="config.jl")
         :nhammock => 5,
         :dhammockslice => 280u"nm",
         :wbumper => 200u"µm",
-        :fillet => 30u"µm",
+        :fillet => 20u"µm",
         :wpost => 50u"µm",
         :hbeam => 10u"µm",
-        :lbeammax => 200u"µm",
+        :lbeammax => 150u"µm",
         :maxseglength => 30u"µm",
         :keygap => 20u"µm",
         :dhammockhatch => 1u"µm",
@@ -458,10 +458,10 @@ function kernel(;px,py,knx,kny,left=false,right=false,top=false,bottom=false,kwa
                     for hr in hbeamrow] for j in 0:(kny-1))...)
 
     #same approach for the vertical beams
-    firstvbeam = Beam(nsegs,zero(kwargs[:wpost]),py + kwargs[:wpost],wbeam;kwargs...)
-    firstvbeam = translate(firstvbeam,[-py+kwargs[:wpost]/2,zero(kwargs[:wpost])],preserveframe=true)
-    #this beam is currently horizontal, do a rotation
-    firstvbeam = rotate(firstvbeam,pi/2,preserveframe=true)
+    firstvbeam = Beam(nsegs,kwargs[:wpost]/2,py - kwargs[:wpost]/2,wbeam;kwargs...)
+    #this beam is currently horizontal, do a rotation about the origin
+    #this changes it from a beam starting at the post and going right to one going down
+    firstvbeam = rotate(firstvbeam,-pi/2,preserveframe=true)
     #make one column's worth of vertical beams
     vbeamcol = map(0:(kny-2)) do j
         translate(firstvbeam,[zero(py),-j*py],preserveframe=true)
@@ -869,7 +869,7 @@ function scaffold(scaffolddir,kwargs::Dict)
             f = iseven(j) ? firstfin : rotate(firstfin,pi,preserveframe=true)
             translate(f,[zero(kwargs[:tfin]),-py*j],preserveframe=true)
         end
-        finblock = SuperBlock(finvec...)
+        finblock = merge(finvec...)
         #translate the origin to the center of the block
         fbt = translateorigin(finblock,[zero(kwargs[:tfin]),-py*(knf-1)/2])
         @info "hatching and compiling fins"
