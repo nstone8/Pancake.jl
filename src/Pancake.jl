@@ -42,6 +42,8 @@ will be written to `"config.jl"`.
 - hamlaserpower: laser power for hammocks
 - tfin: fin thickness
 - finoverlap: amount of overlap between neighboring fins
+- finscanspeed: scan speed for fins
+- finlaserpower: laser power for fins
 - scrollradius: radius at which we expect the scaffold to be scrolled
 - fingap: perpendicular gap between neighboring fins
 - hfintransition: amount of vertical distance over which to skew the fins
@@ -70,14 +72,16 @@ function createconfig(filename="config.jl")
         :dhammockhatch => 1u"µm",
         :dhatch => 300u"nm",
         :laserpower => 50u"mW",
-        :scanspeed => 60_000u"µm/s",
+        :scanspeed => 50_000u"µm/s",
         :stagespeed => 100u"µm/s",
         :interfacepos => 10u"µm",
-        :hamscanspeed => 2_500u"µm/s",
+        :hamscanspeed => 2_000u"µm/s",
         :hamlaserpower => 50u"mW",
         :tfin => 10u"µm",
         :finoverlap => 50u"µm",
         :fingap => 10u"µm",
+        :finscanspeed => 30_000u"µm/s",
+        :finlaserpower => 50u"mW",
         :scrollradius => 3.5u"mm"/(2pi),
         :hfintransition => 10u"µm"
     )
@@ -869,25 +873,25 @@ function scaffold(scaffolddir,kwargs::Dict)
             f = iseven(j) ? firstfin : rotate(firstfin,pi,preserveframe=true)
             translate(f,[zero(kwargs[:tfin]),-py*j],preserveframe=true)
         end
-        finblock = merge(finvec...)
-        #translate the origin to the center of the block
-        fbt = translateorigin(finblock,[zero(kwargs[:tfin]),-py*(knf-1)/2])
+        #translate to put the origin of the whole block at (0,0)
+        translatedfinvec = [translate(f,[zero(kwargs[:tfin]),py*(knf-1)/2],preserveframe=true) for f in finvec]
+        finblock = merge(translatedfinvec...)
         @info "hatching and compiling fins"
-        hatchedfins = hatch(fbt,dhatch=kwargs[:dhatch],
+        hatchedfins = hatch(finblock,dhatch=kwargs[:dhatch],
                             bottomdir = pi/4,
                             diroffset = pi/2)
         compfins = CompiledGeometry(joinpath("scripts","fins.gwl"),
                                     hatchedfins,
-                                    laserpower=kwargs[:laserpower],
-                                    scanspeed=kwargs[:scanspeed])
+                                    laserpower=kwargs[:finlaserpower],
+                                    scanspeed=kwargs[:finscanspeed])
         #gotta go place all the fins
         numfinkernel = ny/knf
         lcompfinvec = map(0:(numfinkernel-1)) do j
-            kcenter = firstkernelfirstpost + [zero(kwargs[:tfin]),-py*knf*j]
+            kcenter = firstkernelfirstpost + [zero(kwargs[:tfin]),-py*(knf-1)/2] + [zero(kwargs[:tfin]),-py*knf*j]
             push!(kcenter,zero(kwargs[:tfin]))
             translate(compfins,kcenter)
         end
-        #coem back up the right side
+        #come back up the right side
         transdist = -2*firstkernelfirstpost[1]
         rcompfinvec = map(reverse(lcompfinvec)) do f
             t = [transdist,zero(kwargs[:tfin]),zero(kwargs[:tfin])]
