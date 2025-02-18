@@ -136,16 +136,15 @@ end
 function bumpersegtrain(startx,endx,startz,endz,bec;kwargs...)
     #to connect the left and right sides, we will use a bunch of identical segments cut to
     #have overhangs on the left side and placed to overlap with each other
-    #get the amount of length that should be devoted to overhangs
     lseg = sqrt(kwargs[:dfield]^2 - kwargs[:wbumper]^2)
-    olength = 2*(endz-startz)*tan(kwargs[:cutangle])
-    #the length of every slice should be constant, the maximum progress we can make per slice
-    #is set by
-    lslicemax = lseg - (olength/2) - kwargs[:overlap]
-    #the distance we have to cover (including overlapping at either end) is...
-    reqdist = endx -  startx + 2*sign(endx-startx)*kwargs[:overlap]
+    #get the amount of length that should be devoted to overhang on the end
+    olength = (endz-startz)*tan(kwargs[:cutangle])
+    #the maximum progress we can make per segment is
+    lsegmax = lseg - olength - 2*sign(endx-startx)*kwargs[:overlap]
+    #the distance we have to cover (including overlapping at the end) is...
+    reqdist = endx - startx + sign(endx-startx)*kwargs[:overlap]
 
-    numsegs = ceil(Int,abs(reqdist/lslicemax))
+    numsegs = ceil(Int,abs(reqdist/lsegmax))
     distperseg = reqdist/numsegs
 
     #build a block representing one of these segments with the middle of the bottom of the `source`
@@ -154,8 +153,8 @@ function bumpersegtrain(startx,endx,startz,endz,bec;kwargs...)
     segslices = map(range(start=startz,step=kwargs[:dslice],stop=endz)) do z
         ycoords = bec(z)
         #we should slant the opposite direction when moving backwards
-        sliceoffset = -sign(reqdist)*z*tan(kwargs[:cutangle])
-        #draw the edges
+        sliceoffset = -sign(reqdist)*(z-startz)*tan(kwargs[:cutangle])
+        #draw the edges.
         e = [LineEdge([sliceoffset,ycoords[1]],
                       [sliceoffset+distperseg+sign(distperseg)*kwargs[:overlap],ycoords[1]]),
              LineEdge([sliceoffset+distperseg+sign(distperseg)*kwargs[:overlap],ycoords[1]],
@@ -175,7 +174,7 @@ function bumpersegtrain(startx,endx,startz,endz,bec;kwargs...)
     #preserveframe, and then slide the resulting object back
     #the -startz translation in the preserveframe step moves the geometry to z=0 in the local
     #frame, the origin of which is at startz in the enclosing frame
-    fbsdisp = sign(distperseg)*olength+(distperseg/2)
+    fbsdisp = (-sign(distperseg)*olength+distperseg)/2
     blocks = [translate(translate(firstseg,[-fbsdisp,0u"µm",-startz],preserveframe=true),
                         [fbsdisp,0u"µm"])]
     #build the rest by copying
@@ -257,7 +256,7 @@ function bumper(;kwargs...)
         wslice = abs(-(ycoords...))
         #get the x coordinate of our bottom left corner, this should be -lseg/4
         #for the bottom slice
-        xbl = (-lseg/4) + (z)*tan(kwargs[:cutangle])
+        xbl = (-lseg/4) + (z-zmid2)*tan(kwargs[:cutangle])
         crightarc2 = [lseg/4 - kwargs[:wbumper]/2, mean(ycoords)]
         #draw the edges
         e = [ArcEdge(crightarc2,wslice/2,3pi/2,pi/2),
@@ -277,10 +276,12 @@ function bumper(;kwargs...)
         wslice = abs(-(ycoords...))
         #get the x coordinate of our bottom right corner, this should be lseg/4
         #for the topmost slice
-        xbr = (lseg/4) + (z-kwargs[:htop])*tan(kwargs[:cutangle])
+        xbr = (lseg/4) + (z-kwargs[:htop]-kwargs[:hbottom])*tan(kwargs[:cutangle])
         cleftarc2 = [-lseg/4 + kwargs[:wbumper]/2, mean(ycoords)]
         #draw the edges
-        e = [ArcEdge(cleftarc2,wslice/2,pi/2,3pi/2),
+        e = [ArcEdge(cleftarc2,wslice/2,pi/2,3pi/4),
+             LineEdge(cleftarc2+(wslice/2)*[cos(3pi/4),sin(3pi/4)],cleftarc2+(wslice/2)*[cos(5pi/4),sin(5pi/4)]),
+             ArcEdge(cleftarc2,wslice/2,5pi/4,3pi/2),
              LineEdge([cleftarc2[1],ycoords[1]],[xbr,ycoords[1]]),
              LineEdge([xbr,ycoords[1]],[xbr,ycoords[2]]),
              LineEdge([xbr,ycoords[2]],[cleftarc2[1],ycoords[2]])]
@@ -295,7 +296,7 @@ function bumper(;kwargs...)
     #build the middle segments in the top
     midtopblocks = bumpersegtrain(kwargs[:lscaf]/2 - lseg/2,
                                   -kwargs[:lscaf]/2 + lseg/2 -
-                                      (kwargs[:htop]-zmid2)*tan(kwargs[:cutangle]),
+                                      (kwargs[:htop]+kwargs[:hbottom]-zmid2)*tan(kwargs[:cutangle]),
                                   zmid2,kwargs[:hbottom]+kwargs[:htop],bec;kwargs...)
     return SuperBlock(lbblock,midbottomblocks...,rbblock,rtblock,midtopblocks...,ltblock)
 end
