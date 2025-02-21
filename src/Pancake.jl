@@ -401,9 +401,16 @@ function post(;kwargs...)
                                end)
     end
 
+    #helper function to calculate the degree of fillet (from 0 to 1) for the posts
+    #when z=0, degreefillet(z) = 1 (fully filleted) when z=:hbottom degreefillet(z)=0
+    degreefillet(z) = if z >= kwargs[:hbottom]
+        0
+    else
+        (kwargs[:hbottom] - z)/kwargs[:hbottom]
+    end
     slicepairs = map(lengthpairs) do (z,l)
         coords = l/2 .* [[1,1],[-1,1],[-1,-1],[1,-1]]
-        z => Slice([polycontour(coords)])
+        z => Slice([polycontour(coords,degreefillet(z)*l/2)])
     end
     Block(slicepairs...)
 end
