@@ -409,6 +409,8 @@ function post(;kwargs...)
         (kwargs[:hbottom] - z)/kwargs[:hbottom]
     end
     slicepairs = map(lengthpairs) do (z,l)
+        #make the feet rounded in the yz/xz plane in addition to filleting in xy
+        l = 0.9*l*(1 - degreefillet(z))^(1/2) + 0.1*l
         coords = l/2 .* [[1,1],[-1,1],[-1,-1],[1,-1]]
         z => Slice([polycontour(coords,degreefillet(z)*l/2)])
     end
