@@ -116,10 +116,14 @@ function bumperedgecoords(;kwargs...)
     nofillet = polycontour(verts)
     filleted = polycontour(verts,fillet)
     function(zcoord)
+        #I'd still like to fillet the top and bottom vertices on the 'inside'
+        filletinside = (zcoord < fillet) || (zcoord > (htop + hbottom - fillet))
         #place a hatchline off of the contour to the left and at our desired height
         hl=HatchLine([-wbumper,zcoord],[1,0]u"µm")
-        #our first coordinate is the first intersection of hl with nofillet
-        firstpara = sort(intersections(nofillet,hl))[1]
+        #our first coordinate is the first intersection of hl with nofillet near the beam
+        #attachments, filleted otherwise
+        firstpara = filletinside ?
+            sort(intersections(filleted,hl))[1] : sort(intersections(nofillet,hl))[1]
         #our second coordinate is the second intersection of hl with filleted
         secondpara = sort(intersections(filleted,hl))[2]
         map([firstpara,secondpara]) do p
@@ -744,6 +748,9 @@ function scaffold(scaffolddir,kwargs::Dict)
             isprime(ni) ? ni+1 : ni
         end
 
+        #we'd also like ny to be even for ease of fin arrangement
+        ny = isodd(ny) ? ny + 1 : ny
+        
         #get the actual beam lengths
         nbeamx = nx - 1
         nbeamy = ny + 1
@@ -869,7 +876,7 @@ function scaffold(scaffolddir,kwargs::Dict)
         #build our fin walls
         #determine the values we're using for lfin and hfintaper
         lfin = py + 2*kwargs[:finoverlap]
-        
+
         #find the maximum number of fins that can be printed at once in one field of view
         knf = filter(allmultiples(ny)) do j
             fits = sqrt((py*(j-1)+lfin)^2 + (kwargs[:fingap] + 2*kwargs[:tfin])^2) < kwargs[:dfield]
